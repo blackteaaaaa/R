@@ -7,6 +7,10 @@ library(ggplot2)
 library(lubridate)
 library(scrubr)
 library(gridExtra)
+library(caret)
+library(e1071)
+library(caTools)
+library(randomForest)
 
 vgsale=read_csv('vgscore.csv')
 vgsale$VGscore=NULL
@@ -345,17 +349,14 @@ na_sale>=0.25~'a')
 
 
 
-#做CART
-library(caret)
-library(e1071)
 
 #分出训练、测试集
-library(caTools)
+
 split = sample.split( withGenre$na_sale, SplitRatio=0.75 )  
 data1Train=subset(withGenre, split==TRUE) 
 data1Test=subset(withGenre,split==FALSE)  
 
-library(randomForest)
+
 
 names(data1Train)=c('developer','publisher','console','sale','Year','genre','month','pubgroup','platform','devgroup')
 withGenre$genre=factor(withGenre$genre)
