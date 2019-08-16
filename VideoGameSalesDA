@@ -1,0 +1,375 @@
+library(tidyverse)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(ggplot2)
+library(lubridate)
+library(scrubr)
+library(gridExtra)
+
+vgsale=read_csv('vgscore.csv')
+vgsale$VGscore=NULL
+vgsale$last_update=NULL
+vgsale$url=NULL
+names(vgsale)[names(vgsale) == 'pal_sale'] = 'eu_sale'
+#修改格式
+vgsale$release_Date=dmy(vgsale$release_Date)
+vgsale$Year=year(vgsale$release_Date)
+vgsale$tot_sale=parse_number(vgsale$tot_sale)
+vgsale$user_Score=parse_number(vgsale$user_Score)
+vgsale$tot_ship=parse_number(vgsale$tot_ship)
+vgsale$na_sale=parse_number(vgsale$na_sale)
+vgsale$eu_sale=parse_number(vgsale$eu_sale)
+vgsale$jp_sale=parse_number(vgsale$jp_sale)
+vgsale$other_sale=parse_number(vgsale$other_sale)
+
+#由于游戏销售额并不是公开数据，数据来源的销售数据是估计值。会存在实际值与数据的估计值存在偏差的现象。
+#有些游戏并没有销售额数据，仅有发售数量数据，由于我个人很难从发售数量估计销售额，所以忽略了这一小部分游戏。
+#其中发售量很多的包括1985年发售的马里奥兄弟，06年发售的Wii Sports、17年PC平台的PUBG等。
+
+#有些游戏是没有评估销量数据的，比如，黑暗剑（划掉）黑暗之魂3.所以没法出现在我们的数据中。遗憾。
+vgsale%>%filter(title=='Dark Souls III')
+
+names=vgsale$title
+uniname=unique(names)
+
+#文本分析
+corpus = Corpus(VectorSource(uniname))
+
+corpus = tm_map(corpus, tolower) 
+corpus = tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, removeWords, stopwords("english")) 
+corpus = tm_map(corpus, stripWhitespace)
+corpus = tm_map(corpus, stemDocument) 
+
+tdm = TermDocumentMatrix(corpus)
+tdm=removeSparseTerms(tdm, 0.999)
+freq = colSums(as.matrix(tdm))   
+m = as.matrix(tdm)
+v = sort(rowSums(m),decreasing=TRUE)
+worddf = data.frame(word = names(v),freq=v)
+
+worddf1= worddf %>% top_n(15)
+
+#画词频bar图
+plot1 = ggplot(worddf1,aes(x = reorder(word,freq), y = freq,fill=freq))+
+geom_bar(stat = "identity")+
+scale_fill_gradient(high = "#132B43", low = "#56B1F7")+
+ylab('Frequency')+
+xlab('Word')+
+theme(axis.text.y=element_text(size=12))+
+theme(axis.text.x=element_text(size=12))+
+theme(axis.title.x=element_text(size=13))+
+theme(axis.title.y=element_text(size=13))+
+theme(plot.title = element_text(hjust=0.5))+
+coord_flip()
+
+plot1
+
+#生成词云：要用非重复的才行哦，因为有重复出版的
+wordcloud(words = worddf1$word, freq = worddf1$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(6,'Paired'))
+
+#画发售数量与年份的关系          
+NumPerYear= vgsale %>% filter(Year<=2018) %>% group_by(Year) %>% count(Year) 
+
+ggplot(NumPerYear, aes(Year,n))+
+geom_point(size=2.5,color='maroon')+
+geom_text(aes(label=ifelse(Year==2009 | Year == 2014,as.character(Year),'')),hjust=0,vjust=-1)+
+geom_line(size=1,color='maroon')+
+theme(axis.text.y=element_text(size=11))+
+theme(axis.text.x=element_text(size=11))+
+ylab('Number of Games Every Year')+
+theme(axis.title.x=element_text(size=13))+
+theme(axis.title.y=element_text(size=14))
+
+#画游戏机与销售额的关系
+PfSales=vgsale%>% select(console,tot_sale)%>% group_by(console) %>% summarize(money=sum(tot_sale, na.rm=T)) %>% arrange(desc(money)) %>% filter(money>0) %>% top_n(20)
+ggplot(PfSales,aes(x = reorder(console,-money),y=money,fill=money))+
+geom_bar(stat = "identity")+
+scale_fill_gradient()+
+theme(axis.text.y=element_text(size=12))+
+theme(axis.text.x=element_text(size=12))+
+theme(axis.title.x=element_text(size=13))+
+theme(axis.title.y=element_text(size=13))+
+theme(plot.title = element_text(hjust=0.5))+
+theme(axis.text.x = element_text(angle=45, hjust=1))+
+ylab('sale')+
+xlab('console')+
+scale_fill_gradient(high = "seagreen4", low = "seagreen2")
+
+#画前二十个发行商
+PfSales=vgsale%>% select(console,tot_sale)%>% group_by(console) %>% summarize(money=sum(tot_sale, na.rm=T)) %>% arrange(desc(money)) %>% filter(money>0) %>% top_n(20)
+PubSales=vgsale%>% select(publisher,tot_sale)%>% group_by(publisher) %>% summarize(money=sum(tot_sale, na.rm=T)) %>% arrange(desc(money)) %>% filter(money>0) %>% top_n(20)
+
+ggplot(PubSales,aes(x = reorder(publisher,money),y=money,fill=money))+
+geom_bar(stat = "identity")+
+scale_fill_gradient()+
+theme(axis.text.y=element_text(size=12))+
+theme(axis.text.x=element_text(size=12))+
+theme(axis.title.x=element_text(size=13))+
+theme(axis.title.y=element_text(size=13))+
+theme(plot.title = element_text(hjust=0.5))+
+scale_fill_gradient(high = "firebrick3", low = "pink2")+
+xlab('publisher')+
+coord_flip()
+
+#出版商的分析
+dedf=data.frame(table(vgsale$developer))
+ggplot(dedf,aes(Freq))+
+geom_histogram(binwidth=1)+
+xlim(1,250)+
+ylim(0,1500)  #中位数是2，出版数前几位占据了绝大多数的出版。还有非常多我们不知道的小出版商在默默出版游戏。出版了1个游戏的公司最多。很多公司都不再尝试了。
+
+dedf=data.frame(table(vgsale$developer))
+
+#名字里有wordl/game的游戏每年有多少？
+vgsale$world=grepl('world',tolower(vgsale$title))
+vgsale$game=grepl('game',tolower(vgsale$title))
+NameYear=vgsale %>% select(title,Year,world,game) %>% arrange(Year) %>% filter(world=='TRUE'|game=='TRUE')
+NameYear=distinct(NameYear)
+NameYear$dup=duplicated(NameYear$title)
+NameYear$dup=NULL
+NameYear=NameYear %>% filter(Year<=2018&Year>=1985)
+NameYear$name=ifelse(NameYear$world=='TRUE','world','game')
+ggplot(NameYear,aes(x=Year,fill=name))+
+geom_bar(stat='count')
+
+#year & publisher
+yearpub1=vgsale %>% select(publisher) %>% group_by(publisher) %>% count() %>% arrange(desc(n)) %>% filter(publisher !='Unknown')
+PubTitle= vgsale %>% select(publisher,title) %>% filter(publisher != 'Unknown') 
+PubTitleDist=distinct(PubTitle)
+PubTitle= vgsale %>% select(publisher,title) %>% filter(publisher != 'Unknown') 
+PubTitleDist=distinct(PubTitle)
+
+PubDf=data.frame(table(PubTitleDist$publisher))
+PubDfcount=data.frame(table(yearpub1)) %>% arrange(desc(Freq))
+
+
+#除去没有记录发行商的游戏，在3146个发行商里，有1171个发行商只发行过1个游戏，发行过5个游戏以下的发行商有2299个，占了73%。
+
+#发行数前15名的bar图：(多平台发行的都算同一个)
+PubDf %>% arrange(desc(Freq)) %>% top_n(15) %>%
+ggplot(aes(x = reorder(Var1,Freq), y = Freq,fill=Freq))+
+geom_bar(stat = "identity")+
+scale_fill_gradient(high = "#132B43", low = "#56B1F7",name='')+
+xlab('Publisher')+
+ylab('Number')+
+theme(axis.text.y=element_text(size=12))+
+theme(axis.text.x=element_text(size=12))+
+theme(axis.title.x=element_text(size=13))+
+theme(axis.title.y=element_text(size=13))+
+theme(plot.title = element_text(hjust=0.5))+
+coord_flip()
+
+#发行数量分布
+data.frame(table(yearpub1$n))%>% 
+ggplot(aes(Var1,Freq))+
+geom_bar(stat="identity",fill='plum4')+
+scale_x_discrete(breaks = seq(0,1000, by = 50)) +
+theme(axis.text.x = element_text(angle=45, hjust=1))+
+xlab('Number')+
+ylab('Frequency')#超过150已经凤毛麟角了
+
+#获得多平台发布的游戏
+vgsale$titledup=duplicated(vgsale$title) | duplicated(vgsale$title, fromLast=TRUE)
+vgsale$user_Score=NULL
+vgsale$tot_ship=NULL
+#所有游戏的全平台的销量
+vgNoConsol = vgsale
+vgNoConsol$duptitle=duplicated(vgNoConsol$title) | duplicated(vgNoConsol$title, fromLast=TRUE)
+vgNoConsol=vgNoConsol %>% filter(duptitle=='FALSE')
+vgNoConsol=vgNoConsol %>% select(title,tot_sale,na_sale,eu_sale,jp_sale,other_sale)
+vgNoConsol=rbind(vgNoConsol,TSsum)
+
+#把tot_sale是NA的都剔除
+vgNoConsol=vgNoConsol %>% filter(tot_sale>0)
+
+#做比例col
+vgNoConsol$NaRatio=vgNoConsol$na_sale/quantile(vgNoConsol$na_sale,0.95,na.rm=T)
+vgNoConsol$EuRatio=vgNoConsol$eu_sale/quantile(vgNoConsol$eu_sale,0.95,na.rm=T)
+vgNoConsol$JpRatio=vgNoConsol$jp_sale/quantile(vgNoConsol$jp_sale,0.95,na.rm=T)
+vgNoConsol$OtherRatio=vgNoConsol$other_sale/quantile(vgNoConsol$other_sale,0.95,na.rm=T)
+
+
+vgNoConsol %>% arrange(desc(tot_sale)) %>% top_n(10,tot_sale)
+
+#全地区卖得好的
+goodsaleall= vgNoConsol %>% filter(NaRatio>1 & EuRatio>1 & JpRatio>1 &OtherRatio>1) %>% arrange(desc(tot_sale)) %>% top_n(10,tot_sale) %>% 
+select(title)
+names(goodsaleall)='All'
+
+#只在NA卖得好
+goodsaleNa=vgNoConsol %>% filter(NaRatio>1 & EuRatio<0.8 & JpRatio<0.8 &OtherRatio<0.8) %>% arrange(desc(na_sale)) %>% top_n(10,NaRatio) %>% 
+select(title)
+names(goodsaleNa)='NorthAmerica Only'
+
+#只在欧美卖得好的
+goodsaleNE=vgNoConsol %>% filter(NaRatio>1 & EuRatio>1 & JpRatio<0.8 &OtherRatio<0.8) %>% arrange(desc(na_sale)) %>% top_n(10,NaRatio) %>% 
+select(title)
+names(goodsaleNE)='NA & EU Only'
+#只在日本卖得好的
+goodsaleJP=vgNoConsol %>% filter(NaRatio<0.8 & EuRatio<0.8 & JpRatio>1 &OtherRatio<0.8) %>% arrange(desc(jp_sale)) %>% top_n(10,jp_sale)%>% 
+select(title)
+names(goodsaleJP)=c('JP Only')
+
+#画出表格
+tt1=ttheme_default(
+  core=list(bg_params = list(fill = brewer.pal(2,'Purples')[1:2], col=NA),
+            fg_params=list(fontface=1)),
+  colhead=list(fg_params=list(col="darkorchid4", fontface=4L)),
+  rowhead=list(fg_params=list(col="darkorchid1", fontface=3L)))
+tt2=ttheme_default(
+  core=list(bg_params = list(fill = brewer.pal(2,'PuBu')[1:2], col=NA),
+            fg_params=list(fontface=1)),
+  colhead=list(fg_params=list(col="steelblue4", fontface=4L)),
+  rowhead=list(fg_params=list(col="steelblue2", fontface=3L)))
+tt3=ttheme_default(
+  core=list(bg_params = list(fill = brewer.pal(2,'YlGn')[1:2], col=NA),
+            fg_params=list(fontface=1)),
+  colhead=list(fg_params=list(col="springgreen4", fontface=4L)),
+  rowhead=list(fg_params=list(col="springgreen2", fontface=3L)))
+tt4=ttheme_default(
+  core=list(bg_params = list(fill = brewer.pal(2,'RdPu')[1:2], col=NA),
+            fg_params=list(fontface=1)),
+  colhead=list(fg_params=list(col="firebrick4", fontface=4L)),
+  rowhead=list(fg_params=list(col="firebrick2", fontface=3L)))
+
+
+grid.arrange(
+  tableGrob(goodsaleall, theme=tt1),
+    tableGrob(goodsaleNa, theme=tt2),
+    tableGrob(goodsaleNE, theme=tt3),
+    tableGrob(goodsaleJP, theme=tt4),
+  nrow=2)
+
+#每一年发售最高的游戏,分平台
+
+saleYearCon=vgsale %>% select(title,tot_sale,Year,console) %>% filter(tot_sale>0)%>% filter(Year<=2018 & Year >=2009) %>% arrange(desc(Year)) %>% group_by(Year) %>% filter(tot_sale == max(tot_sale))
+names(saleYearCon)=c('Name','Total Sale','Year','Console')
+tt5=ttheme_minimal(
+  core=list(bg_params = list(fill = 'mistyrose', col=NA),
+            fg_params=list(fontface=1)),
+  colhead=list(fg_params=list(col="lightcoral", fontface=1)),
+  rowhead=list(fg_params=list(col="lightcoral", fontface=3L)))
+
+
+grid.arrange(
+  tableGrob(saleYearCon, theme=tt5),
+
+  nrow=1)
+  
+ #一年十二个月哪个月发游戏数量最多
+monthNum=data.frame(table(month(vgsale$release_Date)))
+ggplot(monthNum,aes(x = Var1, y = Freq,fill=Freq))+
+geom_bar(stat = "identity")+
+scale_fill_gradient(high = "#132B43", low = "#56B1F7")+
+xlab('Month')+
+ylab('Frequency')
+
+#随机森林
+#从别的数据集得到游戏类型
+vgsale2=read_csv('vgsales-12-4-2019-short.csv')
+
+#从别的数据源搞来了genre轴，加入原来的表格中。
+vgsale2df=vgsale2 %>% select(Name,Genre)
+names(vgsale2df)=c('title','genre')
+withGenre=merge(vgsale,vgsale2df,by='title')
+
+#去掉tot_sale的NA值、去掉了用户评价、名字、发售日期。只用na的数据。使用5年的数据。
+withGenre=withGenre %>% filter(na_sale>0) %>% filter(Year>=2014)
+withGenre$month=month(withGenre$release_Date)
+withGenre$user_Score=NULL
+withGenre$release_Date=NULL
+withGenre$title=NULL
+withGenre$tot_ship=NULL
+withGenre$tot_sale=NULL
+withGenre$eu_sale=NULL
+withGenre$jp_sale=NULL
+withGenre$other_sale=NULL
+#去掉PC
+withGenre=withGenre %>% filter(console != 'PC')
+
+
+
+#分组数据
+#按发行商分组，计数每个发行商出现的次数
+publishercount=withGenre %>% group_by(publisher) %>% count() %>% arrange(desc(n))
+table(publishercount$n)
+#从1-2109
+#1-10  10-50  50-200 200-500 500-1000 1000+
+publishercount=publishercount%>%mutate(
+    group=case_when(
+    n>=1000~1,
+    n>=500&n<1000~2,
+    n>=200&n<500~3,
+    n>=50&n<200~4,
+    n<50~5)
+)
+names(publishercount)=c('publisher','n','pubgroup')
+#试一下把count merge进那个表里
+withGenre=merge(withGenre,publishercount,by='publisher')
+withGenre$n=NULL
+
+#对游戏机分组,要把平台合在一起。
+#X360 XOne 算微软， PS3 PS4 PSV PSN 算PS， NS DS WiiU 3DS Wii
+
+withGenre=withGenre %>% mutate(platform=case_when(
+console=='X360'|console=='XOne' ~ 'Microsoft',
+console=='PS4'|console=='PS3'|console=='PSV'|console=='PSN' ~ 'PlayStation',
+console=='NS'|console=='DS'|console=='WiiU'|console=='3DS'|console=='Wii' ~ 'Nintendo'
+))
+
+developercount=withGenre %>% group_by(developer) %>% count() %>% arrange(desc(n))
+developercount=developercount%>%mutate(
+    devgroup=case_when(
+    n>=200~1,
+    n>=100&n<200~2,
+    n>=50&n<100~3,
+    n>=11&n<50~4,
+    n<11~5)
+)
+developercount$n=NULL
+#把count merge进那个表里
+withGenre=merge(withGenre,developercount,by='developer')
+
+#把sale的数字也分类
+withGenre=withGenre %>% mutate(salegroup=case_when(
+na_sale<0.04~'d',
+na_sale>=0.04 & na_sale<0.09~'c',
+na_sale>=0.09 & na_sale<0.25~'b',
+na_sale>=0.25~'a')
+                    )
+
+
+
+#做CART
+library(caret)
+library(e1071)
+
+#分出训练、测试集
+library(caTools)
+split = sample.split( withGenre$na_sale, SplitRatio=0.75 )  
+data1Train=subset(withGenre, split==TRUE) 
+data1Test=subset(withGenre,split==FALSE)  
+
+library(randomForest)
+
+names(data1Train)=c('developer','publisher','console','sale','Year','genre','month','pubgroup','platform','devgroup')
+withGenre$genre=factor(withGenre$genre)
+withGenre$salegroup=factor(withGenre$salegroup)
+withGenre$platform=factor(withGenre$platform)
+withGenre$pubgroup=factor(withGenre$pubgroup)
+withGenre$devgroup=factor(withGenre$devgroup)
+withGenre$month=factor(withGenre$month)
+
+nasaleRF=randomForest(salegroup~genre+platform+month+pubgroup+devgroup,data=withGenre)
+predTest= predict(nasaleRF, withGenre, type = "class")
+table(predTest, withGenre$salegroup)
+
+#得到准确率为0.7864795的模型
+#画出MeanDecreaseGini图
+varImpPlot(nasaleRF)
+#看出发行月份非常重要。
