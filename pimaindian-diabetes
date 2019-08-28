@@ -1,0 +1,76 @@
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(mice)
+library(VIM)
+library(caTools)
+library(ROCR)
+library(xgboost)
+library(Matrix)
+
+df=read_csv('diabetes.csv')
+head(df)
+
+df[rowSums( is.na( df) )>0,]
+#得知数据集没有na形式的缺失值，但是观察到其实是有的，NA或者0.
+#bloodpressure不可能是0，BMI不可能是0，血糖也不可能是0,所以mice这三个变量
+
+glup=ggplot(df,aes(df$Glucose))+
+geom_density()
+bpp=ggplot(df,aes(df$BloodPressure))+
+geom_density()
+bmip=ggplot(df,aes(df$BMI))+
+geom_density()
+grid.arrange(glup,bpp,bmip,nrow=2)
+
+#把这三个变量的0改写成NA
+glu=df$Glucose
+glu=ifelse(glu==0,NA,glu)
+df$Glucose=glu
+bp=df$BloodPressure
+bp=ifelse(bp==0,NA,bp)
+df$BloodPressure=bp
+bmi=df$BMI
+bmi=ifelse(bmi==0,NA,bmi)
+df$BMI=bmi
+
+#检查数据整体缺失情况
+aggr_plot <- aggr(df, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+#进行mice
+tempdata=mice(df,m=5,maxit=50)
+completedDf=complete(tempdata)
+
+#分割数据集
+split = sample.split( completedDf$Outcome, SplitRatio=0.65 )  
+train=subset(completedDf, split==TRUE) 
+test=subset(completedDf,split==FALSE)
+#建立glm模型
+glm1=glm(Outcome~.,data=train,family=binomial)
+predictTrain=predict(glm1,type='response')
+#检查模型效果
+tapply(predictTrain,train$Outcome,mean)
+table(train$Outcome,predictTrain>0.6)
+predictTest=predict(glm1,newdata=test,type='response')
+ROCRpredTest=prediction(predictTest,test$Outcome)
+ROCRperf = performance( ROCRpredTest, "tpr", "fpr") 
+plot(ROCRperf)
+plot(ROCRperf, colorize=TRUE)
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at = seq(0,1,0.1)) 
+auc = as.numeric(performance(ROCRpredTest, "auc")@y.values)
+auc
+table(test$Outcome,predicttest>0.6)
+
+#xgboost模型：
+trainsm=sparse.model.matrix(Outcome~.-1,data=train)
+output_vector=train$Outcome
+testsm=sparse.model.matrix(Outcome~.-1,data=test)
+output_vector2=test$Outcome
+#交叉验证
+cv.res=xgb.cv(data=trainsm,label=output_vector,max.depth=1,eta=1,nfold=5,nrounds=12,nthread=4,objective='binary:logistic')
+bst=xgboost(data=trainsm,label=output_vector,max.depth=1,eta=1,nfold=5,nrounds=12,nthread=4,objective='binary:logistic')
+pred=predict(bst,newdata=testsm)
+table(output_vector2,pred>0.68)
+#变量重要程度
+importance = xgb.importance(feature_names = trainsm@Dimnames[[2]], model = bst)
+importance
